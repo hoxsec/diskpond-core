@@ -49,6 +49,72 @@ func TestShardedOpenLatestFileStorage(t *testing.T) {
 	require.FileExists(t, filepath.Join(dir, "f", "oob", "arbaz12345678910123213123.f"))
 }
 
+func TestShardedReadsDoNotPersistDefaults(t *testing.T) {
+	t.Parallel()
+
+	for _, isCreate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("create-%v", isCreate), func(t *testing.T) {
+			ctx := testlogging.Context(t)
+			dir := t.TempDir()
+			st, err := filesystem.New(ctx, &filesystem.Options{Path: dir}, isCreate)
+			require.NoError(t, err)
+			defer st.Close(ctx)
+
+			// A pre-.shards repository can still be read using its default layout.
+			parts := []string{"foo", "bar", "baz12345678910123213123.f"}
+			if isCreate {
+				parts = []string{"f", "oob", "arbaz12345678910123213123.f"}
+			}
+
+			filename := filepath.Join(append([]string{dir}, parts...)...)
+			require.NoError(t, os.MkdirAll(filepath.Dir(filename), 0o700))
+			require.NoError(t, os.WriteFile(filename, []byte("existing data"), 0o600))
+
+			var data gather.WriteBuffer
+			defer data.Close()
+
+			const id = "foobarbaz12345678910123213123"
+			require.NoError(t, st.GetBlob(ctx, id, 0, -1, &data))
+			require.Equal(t, "existing data", string(data.ToByteSlice()))
+			_, err = st.GetMetadata(ctx, id)
+			require.NoError(t, err)
+			blobtesting.AssertListResultsIDs(ctx, t, st, "", id)
+			require.ErrorIs(t, st.GetBlob(ctx, "missing", 0, -1, &data), blob.ErrBlobNotFound)
+			require.NoFileExists(t, filepath.Join(dir, ".shards"))
+
+			// The first write must still persist the correct layout for reopening.
+			require.NoError(t, st.PutBlob(ctx, id, gather.FromSlice([]byte("updated")), blob.PutOptions{}))
+			require.FileExists(t, filepath.Join(dir, ".shards"))
+			reopened, err := filesystem.New(ctx, &filesystem.Options{Path: dir}, false)
+			require.NoError(t, err)
+			defer reopened.Close(ctx)
+			require.NoError(t, reopened.GetBlob(ctx, id, 0, -1, &data))
+			require.Equal(t, "updated", string(data.ToByteSlice()))
+		})
+	}
+}
+
+func TestShardedWriteRechecksParametersAfterRead(t *testing.T) {
+	t.Parallel()
+	ctx := testlogging.Context(t)
+	dir := t.TempDir()
+	st, err := filesystem.New(ctx, &filesystem.Options{Path: dir}, false)
+	require.NoError(t, err)
+	defer st.Close(ctx)
+
+	_, err = st.GetMetadata(ctx, "missing")
+	require.ErrorIs(t, err, blob.ErrBlobNotFound)
+	require.NoFileExists(t, filepath.Join(dir, ".shards"))
+
+	parameters := []byte(`{"default":[2,2],"maxNonShardedLength":20}`)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".shards"), parameters, 0o600))
+	require.NoError(t, st.PutBlob(ctx, "foobarbaz12345678910123213123", gather.FromSlice([]byte("data")), blob.PutOptions{}))
+	require.FileExists(t, filepath.Join(dir, "fo", "ob", "arbaz12345678910123213123.f"))
+	actual, err := os.ReadFile(filepath.Join(dir, ".shards"))
+	require.NoError(t, err)
+	require.Equal(t, parameters, actual)
+}
+
 func TestShardedFileStorage(t *testing.T) {
 	t.Parallel()
 

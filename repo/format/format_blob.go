@@ -71,6 +71,34 @@ func ParseKopiaRepositoryJSON(b []byte) (*KopiaRepositoryJSON, error) {
 	return f, nil
 }
 
+// ReadRepositoryBlob reads the current format blob, falling back to its legacy
+// name only when absent. Discovery must not migrate or otherwise write blobs.
+func ReadRepositoryBlob(ctx context.Context, st blob.Reader) (*KopiaRepositoryJSON, error) {
+	var tmp gather.WriteBuffer
+	defer tmp.Close()
+
+	err := st.GetBlob(ctx, KopiaRepositoryBlobID, 0, -1, &tmp)
+	if errors.Is(err, blob.ErrBlobNotFound) {
+		tmp.Reset()
+		err = st.GetBlob(ctx, legacyRepositoryBlobID, 0, -1, &tmp)
+	}
+
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to read repository format blob")
+	}
+
+	f, err := ParseKopiaRepositoryJSON(tmp.ToByteSlice())
+	if err != nil {
+		return nil, err
+	}
+
+	if f == nil || len(f.UniqueID) == 0 {
+		return nil, errors.New("repository format blob has no identity")
+	}
+
+	return f, nil
+}
+
 // DeriveFormatEncryptionKeyFromPassword derives encryption key using the provided password and per-repository unique ID.
 func (f *KopiaRepositoryJSON) DeriveFormatEncryptionKeyFromPassword(password string) ([]byte, error) {
 	res, err := crypto.DeriveKeyFromPassword(password, f.UniqueID, formatBlobEncryptionKeySize, f.KeyDerivationAlgorithm)

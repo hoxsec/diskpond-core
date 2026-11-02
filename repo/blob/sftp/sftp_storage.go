@@ -562,10 +562,16 @@ func New(ctx context.Context, opts *Options, isCreate bool) (blob.Storage, error
 
 	if _, err := sftpClientFromConnection(conn).Stat(opts.Path); err != nil {
 		if isNotExist(err) {
-			if err = sftpClientFromConnection(conn).MkdirAll(opts.Path); err != nil {
-				return nil, errors.Wrap(err, "cannot create path")
+			// Discovery and connection must never create the remote destination.
+			// Subsequent reads report missing blobs for an absent directory.
+			if isCreate {
+				if err = sftpClientFromConnection(conn).MkdirAll(opts.Path); err != nil {
+					r.Close(ctx) //nolint:errcheck
+					return nil, errors.Wrap(err, "cannot create path")
+				}
 			}
 		} else {
+			r.Close(ctx) //nolint:errcheck
 			return nil, errors.Wrapf(err, "path doesn't exist: %s", opts.Path)
 		}
 	}

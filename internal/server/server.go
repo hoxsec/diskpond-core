@@ -842,6 +842,7 @@ func (s *Server) ServeStaticFiles(m *mux.Router, fs http.FileSystem) {
 
 // Options encompasses all API server options.
 type Options struct {
+	ConfigStore              repo.ConfigStore
 	ConfigFile               string
 	ConnectOptions           *repo.ConnectOptions
 	RefreshInterval          time.Duration

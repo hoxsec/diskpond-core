@@ -9,7 +9,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/kopia/kopia/internal/gather"
 	"github.com/kopia/kopia/internal/passwordpersist"
 	"github.com/kopia/kopia/internal/serverapi"
 	"github.com/kopia/kopia/repo"
@@ -108,7 +107,7 @@ func handleRepoCreate(ctx context.Context, rc requestContext) (any, *apiError) {
 		return nil, err
 	}
 
-	st, err := blob.NewStorage(ctx, req.Storage, true)
+	st, err := openStorage(ctx, req.Storage, true, rc.srv.getOptions())
 	if err != nil {
 		return nil, requestError(serverapi.ErrorStorageConnection, "unable to connect to storage: "+err.Error())
 	}
@@ -171,37 +170,24 @@ func handleRepoExists(ctx context.Context, rc requestContext) (any, *apiError) {
 		return nil, unableToDecodeRequest(err)
 	}
 
-	st, err := blob.NewStorage(ctx, req.Storage, false)
+	var options *Options
+	if rc.srv != nil {
+		options = rc.srv.getOptions()
+	}
+	st, err := openStorage(ctx, req.Storage, false, options)
 	if err != nil {
 		return nil, internalServerError(err)
 	}
 
 	defer st.Close(ctx) //nolint:errcheck
 
-	var tmp gather.WriteBuffer
-	defer tmp.Close()
-
-	if err := st.GetBlob(ctx, format.KopiaRepositoryBlobID, 0, -1, &tmp); err != nil {
+	repoJSON, err := format.ReadRepositoryBlob(ctx, st)
+	if err != nil {
 		if errors.Is(err, blob.ErrBlobNotFound) {
-			format.MigrateLegacyBlobIDs(ctx, st)
-
-			if err := st.GetBlob(ctx, format.KopiaRepositoryBlobID, 0, -1, &tmp); err != nil {
-				if errors.Is(err, blob.ErrBlobNotFound) {
-					return nil, requestError(serverapi.ErrorNotInitialized, "repository not initialized")
-				}
-
-				return nil, internalServerError(err)
-			}
-		} else {
-			return nil, internalServerError(err)
+			return nil, requestError(serverapi.ErrorNotInitialized, "repository not initialized")
 		}
-	}
 
-	blobData := tmp.ToByteSlice()
-
-	var repoJSON format.KopiaRepositoryJSON
-	if err := json.Unmarshal(blobData, &repoJSON); err != nil {
-		return nil, internalServerError(errors.Wrap(err, "failed to decode repository JSON"))
+		return nil, internalServerError(err)
 	}
 
 	if req.Password != "" {
@@ -273,7 +259,7 @@ func handleRepoSetDescription(ctx context.Context, rc requestContext) (any, *api
 	cliOpt := rc.rep.ClientOptions()
 	cliOpt.Description = req.Description
 
-	if err := repo.SetClientOptions(ctx, rc.srv.getOptions().ConfigFile, cliOpt); err != nil {
+	if err := repo.SetClientOptions(ctx, rc.srv.getOptions().ConfigFile, cliOpt, rc.srv.getOptions().ConfigStore); err != nil {
 		return nil, internalServerError(err)
 	}
 
@@ -370,12 +356,16 @@ func handleRepoSetThrottle(_ context.Context, rc requestContext) (any, *apiError
 
 func (s *Server) getConnectOptions(cliOpts repo.ClientOptions) *repo.ConnectOptions {
 	o := *s.options.ConnectOptions
+	o.ConfigStore = s.options.ConfigStore
 	o.ClientOptions = o.Override(cliOpts)
 
 	return &o
 }
 
 func connectAPIServerAndOpen(ctx context.Context, si *repo.APIServerInfo, password string, connectOpts *repo.ConnectOptions, opts *Options) (repo.Repository, error) {
+	if opts.ConfigStore != nil {
+		return nil, errors.New("API-server connections are unsupported in managed mode")
+	}
 	if err := passwordpersist.OnSuccess(
 		ctx, repo.ConnectAPIServer(ctx, opts.ConfigFile, si, password, connectOpts),
 		opts.PasswordPersist, opts.ConfigFile, password); err != nil {
@@ -387,7 +377,7 @@ func connectAPIServerAndOpen(ctx context.Context, si *repo.APIServerInfo, passwo
 }
 
 func connectAndOpen(ctx context.Context, conn blob.ConnectionInfo, password string, connectOpts *repo.ConnectOptions, opts *Options) (repo.Repository, error) {
-	st, err := blob.NewStorage(ctx, conn, false)
+	st, err := openStorage(ctx, conn, false, opts)
 	if err != nil {
 		return nil, errors.Wrap(err, "can't open storage")
 	}
@@ -400,7 +390,14 @@ func connectAndOpen(ctx context.Context, conn blob.ConnectionInfo, password stri
 	}
 
 	//nolint:wrapcheck
-	return repo.Open(ctx, opts.ConfigFile, password, nil)
+	return repo.Open(ctx, opts.ConfigFile, password, &repo.Options{ConfigStore: opts.ConfigStore})
+}
+
+func openStorage(ctx context.Context, conn blob.ConnectionInfo, create bool, opts *Options) (blob.Storage, error) {
+	if opts != nil && opts.ConfigStore != nil {
+		return repo.NewManagedStorage(ctx, conn, create)
+	}
+	return blob.NewStorage(ctx, conn, create)
 }
 
 func handleRepoDisconnect(ctx context.Context, rc requestContext) (any, *apiError) {
@@ -416,7 +413,7 @@ func (s *Server) disconnect(ctx context.Context) error {
 		return err
 	}
 
-	if err := repo.Disconnect(ctx, s.options.ConfigFile); err != nil {
+	if err := repo.Disconnect(ctx, s.options.ConfigFile, s.options.ConfigStore); err != nil {
 		//nolint:wrapcheck
 		return err
 	}

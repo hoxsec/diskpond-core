@@ -164,7 +164,12 @@ func (r *directRepository) DeriveKey(purpose string, keyLength int) (derivedKey 
 
 // ClientOptions returns client options.
 func (r *directRepository) ClientOptions() ClientOptions {
-	return r.cliOpts
+	opts := r.cliOpts
+	// Limits can change after opening. A description/profile update must not
+	// persist the stale limits captured when this repository was constructed.
+	limits := r.throttler.Limits()
+	opts.Throttling = &limits
+	return opts
 }
 
 // BlobStorage returns the blob storage.

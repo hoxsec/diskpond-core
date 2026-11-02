@@ -69,6 +69,7 @@ var log = logging.Module("kopia/repo")
 
 // Options provides configuration parameters for connection to a repository.
 type Options struct {
+	ConfigStore          ConfigStore                // Optional process-local managed connection storage.
 	TraceStorage         bool                       // Logs all storage access using provided Printf-style function
 	ContentLogWriter     io.Writer                  // Writer to which the content log is also written
 	TimeNowFunc          func() time.Time           // Time provider
@@ -120,9 +121,17 @@ func Open(ctx context.Context, configFile, password string, options *Options) (r
 		return nil, errors.Wrap(err, "error resolving config file path")
 	}
 
-	lc, err := LoadConfigFromFile(configFile)
+	lc, err := connectionConfigStore(configFile, options.ConfigStore).Load()
 	if err != nil {
 		return nil, err
+	}
+	if lc.ManagedStorage {
+		// Managed diagnostics are redacted by the desktop. Never create a second
+		// raw repository/content log during API connect or its verification open.
+		managedOptions := *options
+		managedOptions.DisableRepositoryLog = true
+		managedOptions.ContentLogWriter = nil
+		options = &managedOptions
 	}
 
 	if lc.PermissiveCacheLoading && !lc.ReadOnly {
@@ -213,10 +222,17 @@ func openAPIServer(ctx context.Context, si *APIServerInfo, cliOpts ClientOptions
 // openDirect opens the repository that directly manipulates blob storage..
 func openDirect(ctx context.Context, configFile string, lc *LocalConfig, password string, options *Options) (rep Repository, err error) {
 	if lc.Storage == nil {
+		if lc.ManagedStorage {
+			return nil, ErrManagedConnection
+		}
 		return nil, errors.New("storage not set in the configuration file")
 	}
 
-	st, err := blob.NewStorage(ctx, *lc.Storage, false)
+	newStorage := blob.NewStorage
+	if lc.ManagedStorage {
+		newStorage = NewManagedStorage
+	}
+	st, err := newStorage(ctx, *lc.Storage, false)
 	if err != nil {
 		return nil, errors.Wrap(err, "cannot open storage")
 	}
@@ -275,14 +291,15 @@ func openWithConfig(ctx context.Context, st blob.Storage, cliOpts ClientOptions,
 	}
 
 	throttler.OnUpdate(func(l throttling.Limits) error {
-		lc2, err2 := LoadConfigFromFile(configFile)
+		store := connectionConfigStore(configFile, options.ConfigStore)
+		lc2, err2 := store.Load()
 		if err2 != nil {
 			return err2
 		}
 
 		lc2.Throttling = &l
 
-		return lc2.writeToFile(configFile)
+		return store.Save(lc2)
 	})
 
 	blobcfg, err := fmgr.BlobCfgBlob(ctx)
