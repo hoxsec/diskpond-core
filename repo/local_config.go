@@ -90,6 +90,8 @@ func (o ClientOptions) UsernameAtHost() string {
 
 // LocalConfig is a configuration of Kopia stored in a configuration file.
 type LocalConfig struct {
+	// ManagedStorage marks a desktop-owned connection with no persisted provider data.
+	ManagedStorage bool `json:"managedStorage,omitempty"`
 	// APIServer is only provided for remote repository.
 	APIServer *APIServerInfo `json:"apiServer,omitempty"`
 
@@ -104,6 +106,10 @@ type LocalConfig struct {
 // writeToFile writes the config to a given file.
 func (lc *LocalConfig) writeToFile(filename string) error {
 	lc2 := *lc
+	if lc2.ManagedStorage {
+		lc2.Storage = nil
+		lc2.APIServer = nil
+	}
 
 	if lc.Caching != nil {
 		lc2.Caching = lc.Caching.CloneOrDefault()
@@ -129,6 +135,14 @@ func (lc *LocalConfig) writeToFile(filename string) error {
 
 // LoadConfigFromFile reads the local configuration from the specified file.
 func LoadConfigFromFile(fileName string) (*LocalConfig, error) {
+	lc, err := loadConfigFromFile(fileName)
+	if err == nil && lc.ManagedStorage {
+		return nil, ErrManagedConnection
+	}
+	return lc, err
+}
+
+func loadConfigFromFile(fileName string) (*LocalConfig, error) {
 	f, err := os.Open(fileName) //nolint:gosec
 	if err != nil {
 		return nil, errors.Wrap(err, "error loading config file")

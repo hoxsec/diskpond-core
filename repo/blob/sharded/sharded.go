@@ -180,10 +180,13 @@ func (s *Storage) GetMetadata(ctx context.Context, blobID blob.ID) (blob.Metadat
 
 // PutBlob implements blob.Storage.
 func (s *Storage) PutBlob(ctx context.Context, blobID blob.ID, data blob.Bytes, opts blob.PutOptions) error {
-	dirPath, filePath, err := s.GetShardedPathAndFilePath(ctx, blobID)
+	parameters, err := s.getParameters(ctx, true)
 	if err != nil {
 		return errors.Wrap(err, "error determining sharded path")
 	}
+
+	dirPath, shardedID := parameters.GetShardDirectoryAndBlob(s.RootPath, blobID)
+	filePath := path.Join(dirPath, s.makeFileName(shardedID))
 
 	//nolint:wrapcheck
 	return s.Impl.PutBlobInPath(ctx, dirPath, filePath, data, opts)
@@ -200,7 +203,7 @@ func (s *Storage) DeleteBlob(ctx context.Context, blobID blob.ID) error {
 	return s.Impl.DeleteBlobInPath(ctx, dirPath, filePath)
 }
 
-func (s *Storage) getParameters(ctx context.Context) (*Parameters, error) {
+func (s *Storage) getParameters(ctx context.Context, persistDefaults bool) (*Parameters, error) {
 	s.parametersMutex.Lock()
 	defer s.parametersMutex.Unlock()
 
@@ -219,7 +222,13 @@ func (s *Storage) getParameters(ctx context.Context) (*Parameters, error) {
 			return nil, errors.Wrap(err, "error getting sharding parameters for storage")
 		}
 
-		// blob.ErrBlobNotFound is ok, initialize parameters from defaults.
+		// Reads must not create .shards. Do not cache absent parameters either:
+		// a later write must recheck for parameters created by another client.
+		if !persistDefaults {
+			return DefaultParameters(s.DirectoryShards), nil
+		}
+
+		// Persist defaults only when writing a blob.
 		s.parameters = DefaultParameters(s.DirectoryShards)
 
 		tmp.Reset()
@@ -245,7 +254,7 @@ func (s *Storage) getParameters(ctx context.Context) (*Parameters, error) {
 }
 
 func (s *Storage) getShardDirectory(ctx context.Context, blobID blob.ID) (string, blob.ID, error) {
-	p, err := s.getParameters(ctx)
+	p, err := s.getParameters(ctx, false)
 	if err != nil {
 		return "", "", err
 	}

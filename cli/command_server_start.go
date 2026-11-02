@@ -20,6 +20,7 @@ import (
 	htpasswd "github.com/tg123/go-htpasswd"
 
 	"github.com/kopia/kopia/internal/auth"
+	"github.com/kopia/kopia/internal/passwordpersist"
 	"github.com/kopia/kopia/internal/server"
 	"github.com/kopia/kopia/notification"
 	"github.com/kopia/kopia/notification/sender/jsonsender"
@@ -66,6 +67,7 @@ type commandServerStart struct {
 	uiTitlePrefix                       string
 	uiPreferencesFile                   string
 	asyncRepoConnect                    bool
+	managedStorage                      bool
 	persistentLogs                      bool
 	debugScheduler                      bool
 	minMaintenanceInterval              time.Duration
@@ -117,6 +119,7 @@ func (c *commandServerStart) setup(svc advancedAppServices, parent commandParent
 	cmd.Flag("tls-print-server-cert", "Print server certificate").Hidden().BoolVar(&c.serverStartTLSPrintFullServerCert)
 
 	cmd.Flag("async-repo-connect", "Connect to repository asynchronously").Hidden().BoolVar(&c.asyncRepoConnect)
+	cmd.Flag("managed-storage", "Keep provider connection data in memory; the desktop supplies connections").Hidden().BoolVar(&c.managedStorage)
 	cmd.Flag("persistent-logs", "Persist logs in a file").Default("true").BoolVar(&c.persistentLogs)
 	cmd.Flag("ui-title-prefix", "UI title prefix").Hidden().Envar(svc.EnvName("KOPIA_UI_TITLE_PREFIX")).StringVar(&c.uiTitlePrefix)
 	cmd.Flag("ui-preferences-file", "Path to JSON file storing UI preferences").StringVar(&c.uiPreferencesFile)
@@ -147,7 +150,15 @@ func (c *commandServerStart) serverStartOptions(ctx context.Context) (*server.Op
 		uiPreferencesFile = filepath.Join(filepath.Dir(c.svc.repositoryConfigFileName()), "ui-preferences.json")
 	}
 
+	var configStore repo.ConfigStore
+	passwordPersistence := c.svc.passwordPersistenceStrategy()
+	if c.managedStorage {
+		configStore = repo.NewManagedConfigStore(c.svc.repositoryConfigFileName())
+		passwordPersistence = passwordpersist.None()
+	}
+
 	return &server.Options{
+		ConfigStore:          configStore,
 		ConfigFile:           c.svc.repositoryConfigFileName(),
 		ConnectOptions:       c.co.toRepoConnectOptions(),
 		RefreshInterval:      c.serverStartRefreshInterval,
@@ -158,7 +169,7 @@ func (c *commandServerStart) serverStartOptions(ctx context.Context) (*server.Op
 		UIUser:               c.sf.serverUsername,
 		ServerControlUser:    c.serverControlUsername,
 		LogRequests:          c.logServerRequests,
-		PasswordPersist:      c.svc.passwordPersistenceStrategy(),
+		PasswordPersist:      passwordPersistence,
 		UIPreferencesFile:    uiPreferencesFile,
 		UITitlePrefix:        c.uiTitlePrefix,
 		PersistentLogs:       c.persistentLogs,
@@ -173,6 +184,9 @@ func (c *commandServerStart) serverStartOptions(ctx context.Context) (*server.Op
 }
 
 func (c *commandServerStart) initRepositoryPossiblyAsync(ctx context.Context, srv *server.Server) error {
+	if c.managedStorage {
+		return nil
+	}
 	initialize := func(ctx context.Context) (repo.Repository, error) {
 		return c.svc.openRepository(ctx, false)
 	}

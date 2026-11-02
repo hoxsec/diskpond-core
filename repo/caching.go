@@ -13,8 +13,8 @@ import (
 )
 
 // GetCachingOptions reads caching configuration for a given repository.
-func GetCachingOptions(_ context.Context, configFile string) (*content.CachingOptions, error) {
-	lc, err := LoadConfigFromFile(configFile)
+func GetCachingOptions(_ context.Context, configFile string, stores ...ConfigStore) (*content.CachingOptions, error) {
+	lc, err := connectionConfigStore(configFile, stores...).Load()
 	if err != nil {
 		return nil, err
 	}
@@ -23,8 +23,9 @@ func GetCachingOptions(_ context.Context, configFile string) (*content.CachingOp
 }
 
 // SetCachingOptions changes caching configuration for a given repository.
-func SetCachingOptions(ctx context.Context, configFile string, opt *content.CachingOptions) error {
-	lc, err := LoadConfigFromFile(configFile)
+func SetCachingOptions(ctx context.Context, configFile string, opt *content.CachingOptions, stores ...ConfigStore) error {
+	store := connectionConfigStore(configFile, stores...)
+	lc, err := store.Load()
 	if err != nil {
 		return err
 	}
@@ -33,7 +34,7 @@ func SetCachingOptions(ctx context.Context, configFile string, opt *content.Cach
 		return errors.Wrap(err, "unable to set up caching")
 	}
 
-	return lc.writeToFile(configFile)
+	return store.Save(lc)
 }
 
 func setupCachingOptionsWithDefaults(ctx context.Context, configPath string, lc *LocalConfig, opt *content.CachingOptions, uniqueID []byte) error {
