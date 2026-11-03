@@ -161,6 +161,12 @@ func TestInitialize(t *testing.T) {
 		format.Initialize(ctx, fst, &format.KopiaRepositoryJSON{}, rc, format.BlobStorageConfiguration{}, "some-password"),
 		errSomeError)
 
+	// A failed listing must not be treated as an empty destination.
+	fst.AddFault(blobtesting.MethodListBlobs).ErrorInstead(errSomeError)
+	require.ErrorIs(t,
+		format.Initialize(ctx, fst, &format.KopiaRepositoryJSON{}, rc, format.BlobStorageConfiguration{}, "some-password"),
+		errSomeError)
+
 	// success
 	require.NoError(t, format.Initialize(ctx, fst, &format.KopiaRepositoryJSON{}, rc, format.BlobStorageConfiguration{}, "some-password"))
 
@@ -168,6 +174,20 @@ func TestInitialize(t *testing.T) {
 	require.ErrorIs(t,
 		format.Initialize(ctx, fst, &format.KopiaRepositoryJSON{}, rc, format.BlobStorageConfiguration{}, "some-password"),
 		format.ErrAlreadyInitialized)
+}
+
+func TestInitializeRejectsExistingData(t *testing.T) {
+	for _, id := range []blob.ID{"blinkdisk.repository", "blinkdisk.blobcfg", "p-orphaned-content", "unrelated"} {
+		t.Run(string(id), func(t *testing.T) {
+			ctx := testlogging.Context(t)
+			data := blobtesting.DataMap{id: []byte("preserve exactly")}
+			st := blobtesting.NewMapStorage(data, nil, nil)
+			require.ErrorIs(t,
+				format.Initialize(ctx, st, &format.KopiaRepositoryJSON{}, rc, format.BlobStorageConfiguration{}, "some-password"),
+				format.ErrAlreadyInitialized)
+			require.Equal(t, blobtesting.DataMap{id: []byte("preserve exactly")}, data)
+		})
+	}
 }
 
 func TestInitializeWithRetention(t *testing.T) {

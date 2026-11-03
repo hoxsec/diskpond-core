@@ -455,6 +455,15 @@ func Initialize(ctx context.Context, st blob.Storage, formatBlob *KopiaRepositor
 		return errors.Wrap(err, "unexpected error when checking for blobcfg blob")
 	}
 
+	// A missing current format blob does not prove this destination is empty:
+	// it may contain a legacy repository or data from a damaged repository.
+	// Stop at the first blob and fail closed on listing/access errors.
+	if err := st.ListBlobs(ctx, "", func(blob.Metadata) error {
+		return ErrAlreadyInitialized
+	}); err != nil {
+		return errors.Wrap(err, "destination must contain no repository data")
+	}
+
 	if formatBlob.EncryptionAlgorithm == "" {
 		formatBlob.EncryptionAlgorithm = DefaultFormatEncryption
 	}
