@@ -46,12 +46,16 @@ func (o *ZipOutput) WriteDirEntry(ctx context.Context, relativePath string, de *
 
 // Close implements restore.Output interface.
 func (o *ZipOutput) Close(_ context.Context) error {
-	if err := o.zf.Close(); err != nil {
-		return errors.Wrap(err, "error closing zip")
+	zipErr := o.zf.Close()
+	// Finalization can fail (for example, when the destination is full).
+	// Always release the underlying file, including on that failure path.
+	closeErr := o.w.Close()
+	if zipErr != nil {
+		return errors.Wrap(zipErr, "error closing zip")
 	}
 
 	//nolint:wrapcheck
-	return o.w.Close()
+	return closeErr
 }
 
 // WriteFile implements restore.Output interface.
