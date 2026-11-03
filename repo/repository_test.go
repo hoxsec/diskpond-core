@@ -14,6 +14,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 
+	"github.com/kopia/kopia/internal/blobtesting"
 	"github.com/kopia/kopia/internal/cache"
 	"github.com/kopia/kopia/internal/crypto"
 	"github.com/kopia/kopia/internal/epoch"
@@ -487,22 +488,13 @@ func TestInitializeWithBlobCfgRetentionBlob(t *testing.T) {
 		),
 		"possible corruption: blobcfg blob exists, but format blob is not found")
 
-	// verify that we consider the repository corrupted if we were unable to
-	// write the blobcfg blob
+	// Verify blobcfg write failures using genuinely empty storage. Hiding the
+	// format blobs in an initialized repository must fail the existing-data guard.
 	require.EqualError(t,
 		repo.Initialize(testlogging.Context(t),
 			beforeop.NewWrapper(
-				env.RootStorage(),
-				// GetBlob callback
-				func(ctx context.Context, id blob.ID) error {
-					// simulate not-found for format-blob and blobcfg blob
-					if id == format.KopiaBlobCfgBlobID || id == format.KopiaRepositoryBlobID {
-						return blob.ErrBlobNotFound
-					}
-
-					return nil
-				},
-				nil, nil,
+				blobtesting.NewMapStorage(blobtesting.DataMap{}, nil, nil),
+				nil, nil, nil,
 				// PutBlob callback
 				func(ctx context.Context, id blob.ID, _ *blob.PutOptions) error {
 					if id == format.KopiaBlobCfgBlobID {
