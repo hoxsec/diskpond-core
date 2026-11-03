@@ -5,7 +5,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/kopia/kopia/fs/localfs"
 )
 
 type failingZipDestination struct {
@@ -53,5 +57,25 @@ func TestZipOutputClose(t *testing.T) {
 				t.Fatalf("underlying destination closed %v times, want once", destination.closes)
 			}
 		})
+	}
+}
+
+func TestZipOutputCloseAfterCopyFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.bin")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("fixture"), 16384), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := localfs.NewEntry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeErr := errors.New("destination full during copy")
+	destination := &failingZipDestination{writeErr: writeErr, closeErr: errors.New("close failed")}
+	_, err = Entry(context.Background(), nil, NewZipOutput(destination, zip.Store), entry, Options{})
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("Entry() = %v, want copy error %v", err, writeErr)
+	}
+	if destination.closes != 1 {
+		t.Fatalf("underlying destination closed %v times, want once", destination.closes)
 	}
 }

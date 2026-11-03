@@ -145,12 +145,15 @@ func Entry(ctx context.Context, rep repo.Repository, output Output, rootEntry fs
 		numWorkers = 1
 	}
 
-	if err := c.q.Process(ctx, numWorkers); err != nil {
-		return Stats{}, errors.Wrap(err, "restore error")
+	copyErr := c.q.Process(ctx, numWorkers)
+	// Release output resources even when copying fails or is canceled.
+	closeErr := c.output.Close(ctx)
+	if copyErr != nil {
+		return Stats{}, errors.Wrap(copyErr, "restore error")
 	}
 
-	if err := c.output.Close(ctx); err != nil {
-		return Stats{}, errors.Wrap(err, "error closing output")
+	if closeErr != nil {
+		return Stats{}, errors.Wrap(closeErr, "error closing output")
 	}
 
 	return c.stats.clone(), nil
