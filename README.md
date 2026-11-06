@@ -1,17 +1,24 @@
-# BlinkDisk Core
+# DiskPond Core
 
-**This is the core library used by the [BlinkDisk desktop app](https://github.com/blinkdisk/blinkdisk).**
+The backup engine used by the [DiskPond desktop app](https://github.com/hoxsec/DiskPond).
+Kopia provides snapshot management, deduplication, encryption, compression and
+storage-provider support.
 
-## Fork of Kopia
+## Integration
 
-This repository is a fork of the incredible [Kopia](https://github.com/kopia/kopia) project, which handles the heavy lifting behind BlinkDisk — including snapshot management, deduplication, encryption, compression, and efficient backup operations.
+DiskPond embeds this repository as its pinned `apps/core` submodule and builds the
+engine with `pnpm build:core` from the application repository. See the application's
+[development guide](https://github.com/hoxsec/DiskPond/blob/main/DEVELOPMENT.txt)
+for toolchain, build and verification instructions.
 
-> ❤️ **A huge thank you to the Kopia team** — this project would not be possible without their amazing work. Kopia is one of the most thoughtfully designed backup engines out there, and we're proud to build on top of it.
+The fork adds desktop integration, repository discovery and legacy-format
+compatibility, source handling and repository statistics. DiskPond Cloud uses the
+standard S3 backend; the retired CloudBlink-specific proxy backend has been removed.
 
-## Differences from Kopia
+## Upstream and license
 
-BlinkDisk Core is kept very close to upstream [Kopia](https://github.com/kopia/kopia) in order to benefit from upstream improvements and bug fixes. Our fork mainly introduces:
-
-- **Removal of unused features** like Kopija’s built-in UI, server functionality, and other CLI tools not used by the BlinkDisk desktop app.
-- **Rebranding** from Kopia to BlinkDisk for internal consistency and integration into the desktop app.
-- **Feature additions** such as support for the CloudBlink Proxy, which enables seamless backups through our managed infrastructure.
+This engine derives from [BlinkDisk Core](https://github.com/blinkdisk/core),
+itself a fork of [Kopia](https://github.com/kopia/kopia). Thanks to the Kopia,
+BlinkDisk and dependency contributors. The engine retains its [Apache-2.0 license](LICENSE)
+and upstream copyright notices. Application provenance and pinned revisions are
+recorded in [UPSTREAM.txt](https://github.com/hoxsec/DiskPond/blob/main/UPSTREAM.txt).
